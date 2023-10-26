@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
-from bowlinggame.model.bowling_errors import FramePinsExceededError
+from bowlinggame.model.bowling_errors import FramePinsExceededError, ExtraRollWithOpenFrameError, \
+    TenthFrameWithMoreThanThreeRollsError
 
 
 @dataclass
@@ -69,14 +70,16 @@ class NormalFrame(Frame):
 
     def score(self) -> int:
         points = self.total_pins
-        if self.is_strike():
+        if self.is_strike() and self.next_frame is not None:
             if len(self.next_frame.rolls) == 2:
                 points += self.next_frame.total_pins
             elif len(self.next_frame.rolls) == 1:
                 points += self.next_frame.rolls[0].pins
-                if len(self.next_frame.next_frame.rolls) > 0:
+                if self.next_frame.next_frame is not None and len(self.next_frame.next_frame.rolls) > 0:
                     points += self.next_frame.next_frame.rolls[0].pins
-        elif self.is_spare():
+                elif type(self.next_frame) is TenthFrame and self.next_frame.extra_roll is not None:
+                    points += self.next_frame.extra_roll.pins
+        elif self.is_spare() and self.next_frame is not None:
             if len(self.next_frame.rolls) > 0:
                 points += self.next_frame.rolls[0].pins
 
@@ -89,22 +92,31 @@ class TenthFrame(Frame):
         self.extra_roll: Optional[Roll] = None
 
     def add_roll(self, pins: int):
+        if not self.is_strike() and not self.is_spare():
+            if pins + self.total_pins > 10:
+                raise FramePinsExceededError("A frame's rolls cannot exceed 10 pins")
+
         if len(self.rolls) < 2:
             self.rolls.append(Roll(pins))
         elif len(self.rolls) == 2 and self.extra_roll is None:
             if self.is_strike() or self.is_spare():
                 self.extra_roll = Roll(pins)
             else:
-                raise IndexError("Can't throw bonus roll with an open tenth frame")
+                raise ExtraRollWithOpenFrameError("Can't throw bonus roll with an open tenth frame")
         else:
-            raise IndexError("Can't add more than three rolls to the tenth frame")
+            raise TenthFrameWithMoreThanThreeRollsError("Can't add more than three rolls to the tenth frame")
 
     def score(self) -> int:
         points = self.total_pins
-        if self.is_strike() or self.is_spare():
+        if (self.is_strike() or self.is_spare()) and self.extra_roll is not None:
             return points + self.extra_roll.pins
         return points
 
+    def __str__(self) -> str:
+        if self.is_strike():
+            return "X"
+        else:
+            return super().__str__()
 
 class Game:
 
@@ -113,12 +125,19 @@ class Game:
     def __init__(self):
         self.frames: list[Frame] = []
         self._init_frames()
+        self.frame_index_count: int = 0
         self.roll_count: int = 0
+
+    def restart(self):
+        self.frames.clear()
+        self._init_frames()
+        self.frame_index_count = 0
+        self.roll_count = 0
 
     @property
     def current_frame_index(self) -> int:
-        if self.roll_count < (Game.MAX_FRAMES * 2):
-            return self.roll_count // 2
+        if self.frame_index_count < (Game.MAX_FRAMES * 2):
+            return self.frame_index_count // 2
         else:
             return Game.MAX_FRAMES - 1
 
@@ -141,14 +160,18 @@ class Game:
         self.frames.append(frame)
 
     def roll(self, pins: int):
+        self.roll_count += 1
         self.frames[self.current_frame_index].add_roll(pins)
         if self.frames[self.current_frame_index].is_strike():
-            self.roll_count += 2
+            self.frame_index_count += 2
         else:
-            self.roll_count += 1
+            self.frame_index_count += 1
 
     def score(self) -> int:
-        if self.current_frame_index < Game.MAX_FRAMES - 1:
-            raise IndexError("There are not enough frames to calculate score")
+        # if self.current_frame_index < Game.MAX_FRAMES - 1:
+        #   raise IndexError("There are not enough frames to calculate score")
 
         return sum(frame.score() for frame in self.frames)
+
+    def __len__(self):
+        return self.roll_count

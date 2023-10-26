@@ -1,15 +1,17 @@
 from tkinter import Tk, Frame, Label, Entry, messagebox
 from tkinter.constants import TOP, X, SOLID, W, LEFT, END
+from tkinter.filedialog import askopenfilename
 from tkinter.ttk import Button
 from customtkinter import CTk
 
 from bowlinggame.model.bowling import Game
-from bowlinggame.model.bowling_errors import FramePinsExceededError
+from bowlinggame.model.bowling_errors import FramePinsExceededError, BowlingError
 
 
 class BowlingFrame(Frame):
     def __init__(self, master=None, number="", is_total=False, **kwargs):
         super().__init__(master, **kwargs)
+        self.is_total = is_total
         self.config(borderwidth=1, relief=SOLID)
         self.config(padx=0, pady=0, bg="white")
 
@@ -38,6 +40,12 @@ class BowlingFrame(Frame):
 
     def activate(self):
         self.frame_label.config(bg="lightgreen")
+
+    def clear(self):
+        if not self.is_total:
+            self.frame_label.config(bg="white")
+        self.frame_rolls.config(text="")
+        self.frame_score.config(text="")
 
 class BowlingApp(CTk):
     def __init__(self, game: Game):
@@ -106,11 +114,18 @@ class BowlingApp(CTk):
         self.unbind("<Visibility>")
 
     def reset(self):
-        pass
+        self.game.restart()
+        for frame in self.frames:
+            frame.clear()
+        self.frames[0].activate()
+        self.add_roll_entry.select_range(0, END)
+        self.add_roll_entry.focus()
 
-    def add_roll(self):
+    def add_roll(self, roll=None):
         try:
-            roll = int(self.add_roll_entry.get())
+            if roll is None:
+                roll = int(self.add_roll_entry.get())
+
             if roll < 0:
                 message = "Roll must be a positive integer value"
                 messagebox.showwarning(title="Validation error", message=message, parent=self)
@@ -121,16 +136,58 @@ class BowlingApp(CTk):
         except ValueError:
             message = "Roll must be an integer value"
             messagebox.showwarning(title="Validation error", message=message, parent=self)
-        except FramePinsExceededError as err:
+        except BowlingError as err:
             messagebox.showwarning(title="Warning", message=str(err), parent=self)
         finally:
             self.add_roll_entry.select_range(0, END)
             self.add_roll_entry.focus()
 
+    def update_total_frame(self):
+        self.frames[-1].update_score(self.game.score())
+        self.frames[-1].update_rolls(len(self.game))
+
     def load_from_file(self):
-        pass
+        file_types = (('Text files', '*.txt'),)
+        filename = askopenfilename(
+            title="Select a bowling score file",
+            initialdir="./assets",
+            filetypes=file_types
+        )
+        self.process_file(filename)
+
+    def process_file(self, file_name):
+        with open(file_name, mode='r') as file:
+            line = file.readline()
+            rolls = line.split()
+            prev_roll = 0
+            for roll in rolls:
+                if roll == "X":
+                    self.add_roll(10)
+                    prev_roll = 10
+                elif roll == "/":
+                    self.add_roll(10 - prev_roll)
+                else:
+                    self.add_roll(int(roll))
+                    prev_roll = int(roll)
 
     def update_frames(self):
         for i, frame in enumerate(self.game.frames):
             self.frames[i].update_rolls(str(frame))
             self.frames[i].update_score(frame.score())
+
+            # Update the extra frame
+            if i == 9:
+                extra_roll_str = ""
+                if frame.is_strike():
+                    if len(frame.rolls) == 2:
+                        extra_roll_str = f"{frame.rolls[1].pins}"
+
+                    if frame.extra_roll is not None:
+                        extra_roll_str += f" | {frame.extra_roll.pins}"
+                else:
+                    if frame.extra_roll is not None:
+                        extra_roll_str = f"{frame.extra_roll.pins}"
+
+                self.frames[i+1].update_rolls(extra_roll_str)
+
+        self.update_total_frame()
